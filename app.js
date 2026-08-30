@@ -1,5 +1,14 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
+  getAuth, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut, 
+  onAuthStateChanged 
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { 
   getFirestore, 
   collection, 
   addDoc, 
@@ -9,13 +18,12 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
-  deleteDoc,
-  getDoc,
+  deleteDoc, 
+  getDoc, 
   serverTimestamp 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDS9A2CqtnY3-2vv9KmNDPUl5sXifxrmYM",
   authDomain: "sleek-chat-app-47b2a.firebaseapp.com",
@@ -26,310 +34,396 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 
-// Unique session identifier for identifying message ownership
-const userId = 'user_' + Math.random().toString(36).substring(2, 9);
-
-// WebRTC Configuration with Echo Cancellation constraints
-const servers = { 
-  iceServers: [
-    { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }
-  ] 
-};
+// State
+let currentUser = null;
+let currentRoom = "general";
 let peerConnection = null;
 let localStream = null;
 let remoteStream = null;
-let isAudioMuted = false;
+let isMuted = false;
+let isScreenSharing = false;
 
 // DOM Elements
+const authOverlay = document.getElementById("authOverlay");
+const authEmail = document.getElementById("authEmail");
+const authPassword = document.getElementById("authPassword");
+const loginBtn = document.getElementById("loginBtn");
+const signupBtn = document.getElementById("signupBtn");
+const googleAuthBtn = document.getElementById("googleAuthBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+
+const userInfoCard = document.getElementById("userInfoCard");
+const userAvatar = document.getElementById("userAvatar");
+const userName = document.getElementById("userName");
+
+const roomSelect = document.getElementById("roomSelect");
+const currentRoomTitle = document.getElementById("currentRoomTitle");
 const messagesContainer = document.getElementById("messagesContainer");
 const messageInput = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
+const typingIndicator = document.getElementById("typingIndicator");
+
+const uploadImageBtn = document.getElementById("uploadImageBtn");
+const imageFileInput = document.getElementById("imageFileInput");
 const voiceMsgBtn = document.getElementById("voiceMsgBtn");
+
 const startCallBtn = document.getElementById("startCallBtn");
 const acceptCallBtn = document.getElementById("acceptCallBtn");
 const rejectCallBtn = document.getElementById("rejectCallBtn");
 const endCallBtn = document.getElementById("endCallBtn");
 const toggleCameraBtn = document.getElementById("toggleCameraBtn");
 const toggleMicBtn = document.getElementById("toggleMicBtn");
+const screenShareBtn = document.getElementById("screenShareBtn");
+const themeToggleBtn = document.getElementById("themeToggleBtn");
+
 const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 const mediaPlaceholder = document.getElementById("mediaPlaceholder");
 const incomingCallModal = document.getElementById("incomingCallModal");
 
-// --- Messaging System ---
-const messagesRef = collection(db, "messages");
-const messagesQuery = query(messagesRef, orderBy("timestamp", "asc"));
-
-onSnapshot(messagesQuery, (snapshot) => {
-  messagesContainer.innerHTML = "";
-  snapshot.forEach((docSnap) => {
-    const data = docSnap.data();
-    const docId = docSnap.id;
-    const isOwner = data.senderId === userId;
-
-    const div = document.createElement("div");
-    div.className = `message-bubble ${isOwner ? 'sent' : 'received'}`;
-    
-    let contentHtml = '';
-    if (data.audioUrl) {
-      contentHtml = `<audio controls src="${data.audioUrl}" style="max-width:200px;"></audio>`;
-    } else {
-      contentHtml = `<div class="message-content">${escapeHtml(data.text)}</div>`;
-    }
-
-    const timeString = data.timestamp ? new Date(data.timestamp.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now';
-
-    div.innerHTML = `
-      ${contentHtml}
-      <div class="msg-footer">
-        <span class="msg-time">${timeString}</span>
-        ${isOwner ? `<button class="delete-msg-btn" data-id="${docId}">Delete</button>` : ''}
-      </div>
-    `;
-
-    messagesContainer.appendChild(div);
-  });
-  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+// --- 1. Authentication Handlers ---
+loginBtn.addEventListener("click", async () => {
+  try {
+    await signInWithEmailAndPassword(auth, authEmail.value, authPassword.value);
+  } catch (err) { alert(err.message); }
 });
 
-// Delete message listener
-messagesContainer.addEventListener("click", async (e) => {
-  if (e.target.classList.contains("delete-msg-btn")) {
-    const docId = e.target.getAttribute("data-id");
-    try {
-      await deleteDoc(doc(db, "messages", docId));
-    } catch (err) {
-      console.error("Error deleting message:", err);
-    }
+signupBtn.addEventListener("click", async () => {
+  try {
+    await createUserWithEmailAndPassword(auth, authEmail.value, authPassword.value);
+  } catch (err) { alert(err.message); }
+});
+
+googleAuthBtn.addEventListener("click", async () => {
+  try {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  } catch (err) { alert(err.message); }
+});
+
+logoutBtn.addEventListener("click", () => signOut(auth));
+
+onAuthStateChanged(auth, (user) => {
+  currentUser = user;
+  if (user) {
+    authOverlay.classList.add("hidden");
+    userInfoCard.classList.remove("hidden");
+    userName.textContent = user.displayName || user.email.split('@')[0];
+    userAvatar.src = user.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.uid}`;
+    listenToMessages();
+    listenForIncomingCalls();
+  } else {
+    authOverlay.classList.remove("hidden");
+    userInfoCard.classList.add("hidden");
   }
 });
 
+// --- 2. Multi-Room Chat System ---
+roomSelect.addEventListener("change", (e) => {
+  currentRoom = e.target.value;
+  currentRoomTitle.textContent = `# ${e.target.options[e.target.selectedIndex].text}`;
+  listenToMessages();
+});
+
+let unsubscribeMessages = null;
+function listenToMessages() {
+  if (unsubscribeMessages) unsubscribeMessages();
+  const roomMessagesRef = collection(db, `rooms/${currentRoom}/messages`);
+  const q = query(roomMessagesRef, orderBy("timestamp", "asc"));
+
+  unsubscribeMessages = onSnapshot(q, (snapshot) => {
+    messagesContainer.innerHTML = "";
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const isOwner = currentUser && data.senderId === currentUser.uid;
+
+      const div = document.createElement("div");
+      div.className = `message-bubble ${isOwner ? 'sent' : 'received'}`;
+
+      let mediaHtml = '';
+      if (data.imageUrl) {
+        mediaHtml = `<img src="${data.imageUrl}" class="msg-image" />`;
+      } else if (data.audioUrl) {
+        mediaHtml = `<audio controls src="${data.audioUrl}"></audio>`;
+      }
+
+      div.innerHTML = `
+        <span class="msg-author">${data.senderName || 'Anonymous'}</span>
+        ${data.text ? `<div>${escapeHtml(data.text)}</div>` : ''}
+        ${mediaHtml}
+        <div class="msg-footer">
+          <span>${data.timestamp ? new Date(data.timestamp.toDate()).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''}</span>
+          ${isOwner ? `<button class="delete-btn" data-id="${docSnap.id}">Delete</button>` : ''}
+        </div>
+      `;
+      messagesContainer.appendChild(div);
+    });
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  });
+}
+
+// Delete Message
+messagesContainer.addEventListener("click", async (e) => {
+  if (e.target.classList.contains("delete-btn")) {
+    const msgId = e.target.getAttribute("data-id");
+    await deleteDoc(doc(db, `rooms/${currentRoom}/messages`, msgId));
+  }
+});
+
+// Send Text Message
 async function sendMessage() {
   const text = messageInput.value.trim();
-  if (!text) return;
-  await addDoc(messagesRef, {
+  if (!text || !currentUser) return;
+  await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
     text: text,
-    senderId: userId,
+    senderId: currentUser.uid,
+    senderName: currentUser.displayName || currentUser.email.split('@')[0],
     timestamp: serverTimestamp()
   });
   messageInput.value = "";
 }
-
 sendBtn.addEventListener("click", sendMessage);
-messageInput.addEventListener("keypress", (e) => {
-  if (e.key === "Enter") sendMessage();
+messageInput.addEventListener("keypress", (e) => { if (e.key === "Enter") sendMessage(); });
+
+// Image Upload
+uploadImageBtn.addEventListener("click", () => imageFileInput.click());
+imageFileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file || !currentUser) return;
+  const storageRef = ref(storage, `chat_images/${Date.now()}_${file.name}`);
+  await uploadBytes(storageRef, file);
+  const url = await getDownloadURL(storageRef);
+  await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
+    imageUrl: url,
+    senderId: currentUser.uid,
+    senderName: currentUser.displayName || currentUser.email.split('@')[0],
+    timestamp: serverTimestamp()
+  });
 });
 
-// --- Voice Messaging ---
-let mediaRecorder;
-let audioChunks = [];
-
+// Voice Notes
+let mediaRecorder, audioChunks = [];
 voiceMsgBtn.addEventListener("click", async () => {
   if (!mediaRecorder || mediaRecorder.state === "inactive") {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder = new MediaRecorder(stream);
-      audioChunks = [];
-      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        const storageRef = ref(storage, `voice/${Date.now()}.webm`);
-        await uploadBytes(storageRef, audioBlob);
-        const url = await getDownloadURL(storageRef);
-        await addDoc(messagesRef, {
-          audioUrl: url,
-          senderId: userId,
-          timestamp: serverTimestamp()
-        });
-      };
-      mediaRecorder.start();
-      voiceMsgBtn.style.background = "rgba(244, 63, 94, 0.2)";
-    } catch (err) {
-      alert("Microphone permission denied.");
-    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const storageRef = ref(storage, `voice_notes/${Date.now()}.webm`);
+      await uploadBytes(storageRef, audioBlob);
+      const url = await getDownloadURL(storageRef);
+      await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
+        audioUrl: url,
+        senderId: currentUser.uid,
+        senderName: currentUser.displayName || currentUser.email.split('@')[0],
+        timestamp: serverTimestamp()
+      });
+    };
+    mediaRecorder.start();
+    voiceMsgBtn.style.background = "rgba(244, 63, 94, 0.3)";
   } else {
     mediaRecorder.stop();
     voiceMsgBtn.style.background = "";
   }
 });
 
-// --- WebRTC Multi-Device Calling System ---
-const callsRef = collection(db, "calls");
-const callDocId = "globalActiveCallSession";
-
-async function getMediaStream(videoEnabled = false) {
-  return await navigator.mediaDevices.getUserMedia({ 
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
-    }, 
-    video: videoEnabled 
+// Typing Indicators
+let typingTimeout = null;
+messageInput.addEventListener("input", () => {
+  if (!currentUser) return;
+  setDoc(doc(db, `rooms/${currentRoom}/typing`, currentUser.uid), {
+    name: currentUser.displayName || currentUser.email.split('@')[0],
+    typing: true
   });
-}
+  clearTimeout(typingTimeout);
+  typingTimeout = setTimeout(() => {
+    deleteDoc(doc(db, `rooms/${currentRoom}/typing`, currentUser.uid));
+  }, 2000);
+});
 
-function setupPeerConnection() {
+onSnapshot(collection(db, `rooms/${currentRoom}/typing`), (snapshot) => {
+  const typers = [];
+  snapshot.forEach(d => {
+    if (d.id !== currentUser?.uid && d.data().typing) typers.push(d.data().name);
+  });
+  typingIndicator.textContent = typers.length ? `${typers.join(", ")} typing...` : "";
+});
+
+// --- 3. WebRTC Calling & Screen Share ---
+const servers = { iceServers: [{ urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }] };
+const callDocId = "globalActiveSession";
+
+startCallBtn.addEventListener("click", async () => {
+  localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  localVideo.srcObject = localStream;
+  mediaPlaceholder.style.display = "none";
+
   peerConnection = new RTCPeerConnection(servers);
   remoteStream = new MediaStream();
   remoteVideo.srcObject = remoteStream;
 
-  peerConnection.ontrack = (event) => {
-    event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
-    mediaPlaceholder.style.display = "none";
-  };
+  localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+  peerConnection.ontrack = e => e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
+
+  const callDoc = doc(collection(db, "calls"), callDocId);
+  const offerCandidates = collection(callDoc, "offerCandidates");
+  const answerCandidates = collection(callDoc, "answerCandidates");
+
+  peerConnection.onicecandidate = e => e.candidate && addDoc(offerCandidates, e.candidate.toJSON());
+
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+  await setDoc(callDoc, { 
+    offer, 
+    status: "calling",
+    callerName: currentUser.displayName || currentUser.email.split('@')[0] 
+  });
+
+  onSnapshot(callDoc, async (snap) => {
+    const data = snap.data();
+    if (peerConnection && !peerConnection.currentRemoteDescription && data?.answer) {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+    }
+  });
+
+  onSnapshot(answerCandidates, snap => {
+    snap.docChanges().forEach(change => {
+      if (change.type === "added") peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+    });
+  });
+
+  startCallBtn.disabled = true;
+  endCallBtn.disabled = false;
+  toggleCameraBtn.disabled = false;
+  toggleMicBtn.disabled = false;
+  screenShareBtn.disabled = false;
+});
+
+function listenForIncomingCalls() {
+  onSnapshot(doc(collection(db, "calls"), callDocId), (snap) => {
+    const data = snap.data();
+    if (data?.offer && !peerConnection && data?.status === "calling") {
+      document.getElementById("incomingCallerName").textContent = `${data.callerName || 'Someone'} is calling...`;
+      incomingCallModal.classList.remove("hidden");
+    }
+  });
 }
 
-// 1. Caller starts the session
-startCallBtn.addEventListener("click", async () => {
-  try {
-    localStream = await getMediaStream(false);
-    localVideo.srcObject = localStream;
-    mediaPlaceholder.style.display = "none";
-
-    setupPeerConnection();
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    const callDoc = doc(callsRef, callDocId);
-    const offerCandidates = collection(callDoc, "offerCandidates");
-    const answerCandidates = collection(callDoc, "answerCandidates");
-
-    peerConnection.onicecandidate = e => e.candidate && addDoc(offerCandidates, e.candidate.toJSON());
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    await setDoc(callDoc, { offer: { type: offer.type, sdp: offer.sdp }, status: "calling" });
-
-    onSnapshot(callDoc, async (snapshot) => {
-      const data = snapshot.data();
-      if (peerConnection && !peerConnection.currentRemoteDescription && data?.answer) {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-      }
-    });
-
-    onSnapshot(answerCandidates, (snapshot) => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === "added") {
-          peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-        }
-      });
-    });
-
-    startCallBtn.disabled = true;
-    endCallBtn.disabled = false;
-    toggleCameraBtn.disabled = false;
-    toggleMicBtn.disabled = false;
-  } catch (err) {
-    console.error("Call initialization failed:", err);
-    alert("Could not access microphone.");
-  }
-});
-
-// 2. Global listener detecting incoming calls
-onSnapshot(doc(callsRef, callDocId), (snapshot) => {
-  const data = snapshot.data();
-  if (data?.offer && !peerConnection && data?.status === "calling") {
-    incomingCallModal.classList.remove("hidden");
-  }
-});
-
-// 3. Callee accepts the call popup
 acceptCallBtn.addEventListener("click", async () => {
   incomingCallModal.classList.add("hidden");
-  try {
-    localStream = await getMediaStream(false);
-    localVideo.srcObject = localStream;
-    mediaPlaceholder.style.display = "none";
+  localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  localVideo.srcObject = localStream;
+  mediaPlaceholder.style.display = "none";
 
-    setupPeerConnection();
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  peerConnection = new RTCPeerConnection(servers);
+  remoteStream = new MediaStream();
+  remoteVideo.srcObject = remoteStream;
 
-    const callDoc = doc(callsRef, callDocId);
-    const answerCandidates = collection(callDoc, "answerCandidates");
-    const offerCandidates = collection(callDoc, "offerCandidates");
+  localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+  peerConnection.ontrack = e => e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
 
-    peerConnection.onicecandidate = e => e.candidate && addDoc(answerCandidates, e.candidate.toJSON());
+  const callDoc = doc(collection(db, "calls"), callDocId);
+  const answerCandidates = collection(callDoc, "answerCandidates");
+  const offerCandidates = collection(callDoc, "offerCandidates");
 
-    const callSnap = await getDoc(callDoc);
-    const callData = callSnap.data();
+  peerConnection.onicecandidate = e => e.candidate && addDoc(answerCandidates, e.candidate.toJSON());
 
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(callData.offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    await updateDoc(callDoc, { answer: { type: answer.type, sdp: answer.sdp }, status: "connected" });
+  const callSnap = await getDoc(callDoc);
+  await peerConnection.setRemoteDescription(new RTCSessionDescription(callSnap.data().offer));
 
-    onSnapshot(offerCandidates, (snapshot) => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === "added") {
-          peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-        }
-      });
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
+  await updateDoc(callDoc, { answer, status: "connected" });
+
+  onSnapshot(offerCandidates, snap => {
+    snap.docChanges().forEach(change => {
+      if (change.type === "added") peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
     });
+  });
 
-    startCallBtn.disabled = true;
-    endCallBtn.disabled = false;
-    toggleCameraBtn.disabled = false;
-    toggleMicBtn.disabled = false;
-  } catch (err) {
-    console.error("Error accepting call:", err);
+  startCallBtn.disabled = true;
+  endCallBtn.disabled = false;
+  toggleCameraBtn.disabled = false;
+  toggleMicBtn.disabled = false;
+  screenShareBtn.disabled = false;
+});
+
+rejectCallBtn.addEventListener("click", () => {
+  incomingCallModal.classList.add("hidden");
+});
+
+// Screen Share Toggle
+screenShareBtn.addEventListener("click", async () => {
+  if (!isScreenSharing) {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const screenTrack = screenStream.getVideoTracks()[0];
+      const sender = peerConnection.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) sender.replaceTrack(screenTrack);
+      else peerConnection.addTrack(screenTrack, localStream);
+
+      localVideo.srcObject = screenStream;
+      isScreenSharing = true;
+      screenShareBtn.style.background = "var(--accent)";
+
+      screenTrack.onended = () => stopScreenShare();
+    } catch (err) { console.error(err); }
+  } else {
+    stopScreenShare();
   }
 });
 
-rejectCallBtn.addEventListener("click", async () => {
-  incomingCallModal.classList.add("hidden");
-  try {
-    await updateDoc(doc(callsRef, callDocId), { offer: null, status: "rejected" });
-  } catch(e) {}
-});
+function stopScreenShare() {
+  const videoTrack = localStream.getVideoTracks()[0];
+  const sender = peerConnection.getSenders().find(s => s.track?.kind === 'video');
+  if (sender && videoTrack) sender.replaceTrack(videoTrack);
+  localVideo.srcObject = localStream;
+  isScreenSharing = false;
+  screenShareBtn.style.background = "";
+}
 
-// Toggle Video Camera on the fly
+// Camera Toggle
 toggleCameraBtn.addEventListener("click", async () => {
   let videoTrack = localStream.getVideoTracks()[0];
   if (!videoTrack) {
-    try {
-      const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
-      videoTrack = camStream.getVideoTracks()[0];
-      localStream.addTrack(videoTrack);
-      
-      const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-      if (sender) {
-        sender.replaceTrack(videoTrack);
-      } else {
-        peerConnection.addTrack(videoTrack, localStream);
-      }
-      localVideo.srcObject = localStream;
-      toggleCameraBtn.style.background = "var(--accent)";
-    } catch (e) {
-      alert("Camera permission denied or unavailable.");
-    }
+    const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    videoTrack = camStream.getVideoTracks()[0];
+    localStream.addTrack(videoTrack);
+    peerConnection.addTrack(videoTrack, localStream);
+    localVideo.srcObject = localStream;
   } else {
     videoTrack.enabled = !videoTrack.enabled;
-    toggleCameraBtn.style.background = videoTrack.enabled ? "var(--accent)" : "";
   }
 });
 
-// Toggle Microphone Mute
+// Mic Mute Toggle
 toggleMicBtn.addEventListener("click", () => {
   const audioTrack = localStream.getAudioTracks()[0];
   if (audioTrack) {
-    isAudioMuted = !isAudioMuted;
-    audioTrack.enabled = !isAudioMuted;
-    toggleMicBtn.style.background = isAudioMuted ? "var(--danger)" : "";
-    toggleMicBtn.innerHTML = isAudioMuted ? '<span class="icon">🔇</span> Unmute' : '<span class="icon">🎙️</span> Mute';
+    isMuted = !isMuted;
+    audioTrack.enabled = !isMuted;
+    toggleMicBtn.style.background = isMuted ? "var(--danger)" : "";
   }
 });
 
-// Hang up call
+// Theme Toggle
+themeToggleBtn.addEventListener("click", () => {
+  document.body.classList.toggle("theme-light");
+});
+
+// Hang Up
 endCallBtn.addEventListener("click", () => {
   if (peerConnection) peerConnection.close();
   if (localStream) localStream.getTracks().forEach(t => t.stop());
   location.reload();
 });
 
-// Utility security helper
 function escapeHtml(text) {
-  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-  return text.replace(/[&<>"']/g, m => map[m]);
+  return text.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 }

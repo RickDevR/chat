@@ -3,17 +3,37 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nexus Stream - Modern Chat & Call</title>
+  <title>Nexus Stream - Advanced Chat & Call</title>
   <link rel="stylesheet" href="style.css">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
-<body>
-  <!-- Global Incoming Call Modal -->
+<body class="theme-dark">
+  <!-- Auth Overlay -->
+  <div id="authOverlay" class="modal-backdrop">
+    <div class="modal-card animate-pop">
+      <div class="logo-icon large"></div>
+      <h2>Welcome to Nexus</h2>
+      <p>Sign in to access encrypted channels and calls</p>
+      
+      <div class="auth-forms">
+        <input type="email" id="authEmail" placeholder="Email Address" />
+        <input type="password" id="authPassword" placeholder="Password" />
+        <div class="auth-btn-group">
+          <button id="loginBtn" class="btn btn-primary">Sign In</button>
+          <button id="signupBtn" class="btn btn-secondary">Sign Up</button>
+        </div>
+        <div class="divider"><span>OR</span></div>
+        <button id="googleAuthBtn" class="btn btn-google">Continue with Google</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Incoming Call Modal -->
   <div id="incomingCallModal" class="modal-backdrop hidden">
     <div class="modal-card animate-pop">
       <div class="pulsing-ring"></div>
       <h3>Incoming Transmission</h3>
-      <p>Someone is requesting a secure connection...</p>
+      <p id="incomingCallerName">Someone is requesting a connection...</p>
       <div class="modal-actions">
         <button id="acceptCallBtn" class="btn btn-success">Accept Call</button>
         <button id="rejectCallBtn" class="btn btn-danger">Decline</button>
@@ -22,16 +42,37 @@
   </div>
 
   <div class="app-container">
-    <!-- Sidebar: Media Streams & Call Controls -->
+    <!-- Sidebar -->
     <aside class="sidebar">
       <div class="brand-box">
         <div class="logo-icon"></div>
         <div>
           <h2>Nexus</h2>
-          <span class="status-badge"><span class="dot"></span> Secure Network</span>
+          <span class="status-badge"><span class="dot"></span> Online</span>
         </div>
       </div>
 
+      <!-- User Info Card -->
+      <div id="userInfoCard" class="user-info-card hidden">
+        <img id="userAvatar" class="avatar" src="https://via.placeholder.com/40" alt="Avatar" />
+        <div class="user-details">
+          <span id="userName" class="user-name">User</span>
+          <span id="userStatus" class="user-status">Online</span>
+        </div>
+        <button id="logoutBtn" class="icon-btn" title="Sign Out">🚪</button>
+      </div>
+
+      <!-- Channel Rooms Switcher -->
+      <div class="room-selector">
+        <label>Active Channel</label>
+        <select id="roomSelect">
+          <option value="general">🌐 General Lounge</option>
+          <option value="tech">💻 Tech & Code</option>
+          <option value="gaming">🎮 Gaming Zone</option>
+        </select>
+      </div>
+
+      <!-- Media Viewport -->
       <div class="media-viewport">
         <video id="remoteVideo" autoplay playsinline></video>
         <video id="localVideo" autoplay playsinline muted></video>
@@ -40,32 +81,34 @@
         </div>
       </div>
 
+      <!-- Call Controls -->
       <div class="controls-panel">
         <button id="startCallBtn" class="btn btn-primary glow-effect">
           <span class="icon">📞</span> Start Call
         </button>
         <div class="control-row">
-          <button id="toggleCameraBtn" class="btn btn-secondary" disabled>
-            <span class="icon">📷</span> Cam
-          </button>
-          <button id="toggleMicBtn" class="btn btn-secondary" disabled>
-            <span class="icon">🎙️</span> Mute
-          </button>
+          <button id="toggleCameraBtn" class="btn btn-secondary" disabled><span class="icon">📷</span> Cam</button>
+          <button id="toggleMicBtn" class="btn btn-secondary" disabled><span class="icon">🎙️</span> Mute</button>
         </div>
-        <button id="endCallBtn" class="btn btn-danger" disabled>
-          <span class="icon">🔴</span> Hang Up
-        </button>
+        <div class="control-row">
+          <button id="screenShareBtn" class="btn btn-secondary" disabled><span class="icon">🖥️</span> Share</button>
+          <button id="themeToggleBtn" class="btn btn-secondary"><span class="icon">🌓</span> Theme</button>
+        </div>
+        <button id="endCallBtn" class="btn btn-danger" disabled><span class="icon">🔴</span> Hang Up</button>
       </div>
     </aside>
 
-    <!-- Main Chat Workspace -->
+    <!-- Main Workspace -->
     <main class="chat-workspace">
       <header class="chat-header">
         <div>
-          <h1>Global Channel</h1>
-          <p>Real-time encrypted pipeline</p>
+          <h1 id="currentRoomTitle"># General Lounge</h1>
+          <p id="typingIndicator" class="typing-text"></p>
         </div>
-        <div class="user-badge" id="userStatusBadge">Connected</div>
+        <div class="header-actions">
+          <input type="file" id="imageFileInput" accept="image/*" class="hidden" />
+          <button id="uploadImageBtn" class="action-btn" title="Upload Image">🖼️</button>
+        </div>
       </header>
 
       <div id="messagesContainer" class="messages-container"></div>
@@ -73,7 +116,7 @@
       <div class="input-workspace">
         <button id="voiceMsgBtn" class="action-btn" title="Record Voice Note">🎙️</button>
         <div class="input-wrapper">
-          <input type="text" id="messageInput" placeholder="Type a message or press enter..." autocomplete="off" />
+          <input type="text" id="messageInput" placeholder="Type a message or paste a URL..." autocomplete="off" />
         </div>
         <button id="sendBtn" class="send-action-btn">Send ➔</button>
       </div>
