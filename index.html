@@ -3,42 +3,79 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sleek Connect</title>
+  <title>Nexus Stream - Modern Chat & Call</title>
   <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="app-container">
-    <aside class="sidebar">
-      <div class="brand">
-        <h2>SleekConnect</h2>
-        <span class="status-indicator online"></span>
+  <!-- Global Incoming Call Modal -->
+  <div id="incomingCallModal" class="modal-backdrop hidden">
+    <div class="modal-card animate-pop">
+      <div class="pulsing-ring"></div>
+      <h3>Incoming Transmission</h3>
+      <p>Someone is requesting a secure connection...</p>
+      <div class="modal-actions">
+        <button id="acceptCallBtn" class="btn btn-success">Accept Call</button>
+        <button id="rejectCallBtn" class="btn btn-danger">Decline</button>
       </div>
-      
-      <div class="media-window">
+    </div>
+  </div>
+
+  <div class="app-container">
+    <!-- Sidebar: Media Streams & Call Controls -->
+    <aside class="sidebar">
+      <div class="brand-box">
+        <div class="logo-icon"></div>
+        <div>
+          <h2>Nexus</h2>
+          <span class="status-badge"><span class="dot"></span> Secure Network</span>
+        </div>
+      </div>
+
+      <div class="media-viewport">
         <video id="remoteVideo" autoplay playsinline></video>
         <video id="localVideo" autoplay playsinline muted></video>
+        <div id="mediaPlaceholder" class="viewport-placeholder">
+          <span>Camera & Audio Offline</span>
+        </div>
       </div>
 
-      <div class="controls">
-        <button id="startCallBtn" class="btn call-btn">📞 Start Call</button>
-        <button id="toggleCameraBtn" class="btn icon-btn" disabled>📷 Camera</button>
-        <button id="endCallBtn" class="btn end-btn" disabled>🚫 Hang Up</button>
-      </div>
-
-      <div id="incomingCallModal" class="call-modal hidden">
-        <p>Incoming Call...</p>
-        <button id="acceptCallBtn" class="btn accept-btn">Answer</button>
+      <div class="controls-panel">
+        <button id="startCallBtn" class="btn btn-primary glow-effect">
+          <span class="icon">📞</span> Start Call
+        </button>
+        <div class="control-row">
+          <button id="toggleCameraBtn" class="btn btn-secondary" disabled>
+            <span class="icon">📷</span> Cam
+          </button>
+          <button id="toggleMicBtn" class="btn btn-secondary" disabled>
+            <span class="icon">🎙️</span> Mute
+          </button>
+        </div>
+        <button id="endCallBtn" class="btn btn-danger" disabled>
+          <span class="icon">🔴</span> Hang Up
+        </button>
       </div>
     </aside>
 
-    <main class="chat-area">
+    <!-- Main Chat Workspace -->
+    <main class="chat-workspace">
+      <header class="chat-header">
+        <div>
+          <h1>Global Channel</h1>
+          <p>Real-time encrypted pipeline</p>
+        </div>
+        <div class="user-badge" id="userStatusBadge">Connected</div>
+      </header>
+
       <div id="messagesContainer" class="messages-container"></div>
 
-      <div class="input-bar">
-        <input type="text" id="messageInput" placeholder="Type a message..." />
-        <button id="voiceMsgBtn" class="btn voice-btn">🎙️</button>
-        <button id="sendBtn" class="btn send-btn">Send</button>
+      <div class="input-workspace">
+        <button id="voiceMsgBtn" class="action-btn" title="Record Voice Note">🎙️</button>
+        <div class="input-wrapper">
+          <input type="text" id="messageInput" placeholder="Type a message or press enter..." autocomplete="off" />
+        </div>
+        <button id="sendBtn" class="send-action-btn">Send ➔</button>
       </div>
     </main>
   </div>
