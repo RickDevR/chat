@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sleek Connect</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <aside class="sidebar">
+      <div class="brand">
+        <h2>SleekConnect</h2>
+        <span class="status-indicator online"></span>
+      </div>
+      
+      <div class="media-window">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video>
+      </div>
+
+      <div class="controls">
+        <button id="startCallBtn" class="btn call-btn">📞 Start Call</button>
+        <button id="toggleCameraBtn" class="btn icon-btn" disabled>📷 Camera</button>
+        <button id="endCallBtn" class="btn end-btn" disabled>🚫 Hang Up</button>
+      </div>
+
+      <div id="incomingCallModal" class="call-modal hidden">
+        <p>Incoming Call...</p>
+        <button id="acceptCallBtn" class="btn accept-btn">Answer</button>
+      </div>
+    </aside>
+
+    <main class="chat-area">
+      <div id="messagesContainer" class="messages-container"></div>
+
+      <div class="input-bar">
+        <input type="text" id="messageInput" placeholder="Type a message..." />
+        <button id="voiceMsgBtn" class="btn voice-btn">🎙️</button>
+        <button id="sendBtn" class="btn send-btn">Send</button>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
