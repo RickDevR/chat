@@ -38,7 +38,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 
-// State
+// Global State
 let currentUser = null;
 let currentRoom = "general";
 let peerConnection = null;
@@ -47,7 +47,7 @@ let remoteStream = null;
 let isMuted = false;
 let isScreenSharing = false;
 
-// DOM Elements
+// DOM Controls
 const authOverlay = document.getElementById("authOverlay");
 const authEmail = document.getElementById("authEmail");
 const authPassword = document.getElementById("authPassword");
@@ -87,22 +87,24 @@ const incomingCallModal = document.getElementById("incomingCallModal");
 
 // --- 1. Authentication Handlers ---
 loginBtn.addEventListener("click", async () => {
+  if (!authEmail.value || !authPassword.value) return alert("Please fill in email and password.");
   try {
     await signInWithEmailAndPassword(auth, authEmail.value, authPassword.value);
-  } catch (err) { alert(err.message); }
+  } catch (err) { alert("Login failed: " + err.message); }
 });
 
 signupBtn.addEventListener("click", async () => {
+  if (!authEmail.value || !authPassword.value) return alert("Please fill in email and password.");
   try {
     await createUserWithEmailAndPassword(auth, authEmail.value, authPassword.value);
-  } catch (err) { alert(err.message); }
+  } catch (err) { alert("Signup failed: " + err.message); }
 });
 
 googleAuthBtn.addEventListener("click", async () => {
   try {
     const provider = new GoogleAuthProvider();
     await signInWithPopup(auth, provider);
-  } catch (err) { alert(err.message); }
+  } catch (err) { alert("Google Auth failed: " + err.message); }
 });
 
 logoutBtn.addEventListener("click", () => signOut(auth));
@@ -117,6 +119,8 @@ onAuthStateChanged(auth, (user) => {
     listenToMessages();
     listenForIncomingCalls();
   } else {
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    if (peerConnection) peerConnection.close();
     authOverlay.classList.remove("hidden");
     userInfoCard.classList.add("hidden");
   }
@@ -137,8 +141,17 @@ function listenToMessages() {
 
   unsubscribeMessages = onSnapshot(q, (snapshot) => {
     messagesContainer.innerHTML = "";
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
+    
+    // Convert snapshots and apply stable fallback sorting
+    const docs = [];
+    snapshot.forEach(docSnap => docs.push({ id: docSnap.id, data: docSnap.data() }));
+    docs.sort((a, b) => {
+      const timeA = a.data.timestamp ? a.data.timestamp.toMillis() : Date.now();
+      const timeB = b.data.timestamp ? b.data.timestamp.toMillis() : Date.now();
+      return timeA - timeB;
+    });
+
+    docs.forEach(({ id, data }) => {
       const isOwner = currentUser && data.senderId === currentUser.uid;
 
       const div = document.createElement("div");
@@ -151,13 +164,15 @@ function listenToMessages() {
         mediaHtml = `<audio controls src="${data.audioUrl}"></audio>`;
       }
 
+      const formattedTime = data.timestamp ? new Date(data.timestamp.toDate()).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'Sending...';
+
       div.innerHTML = `
         <span class="msg-author">${data.senderName || 'Anonymous'}</span>
         ${data.text ? `<div>${escapeHtml(data.text)}</div>` : ''}
         ${mediaHtml}
         <div class="msg-footer">
-          <span>${data.timestamp ? new Date(data.timestamp.toDate()).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''}</span>
-          ${isOwner ? `<button class="delete-btn" data-id="${docSnap.id}">Delete</button>` : ''}
+          <span>${formattedTime}</span>
+          ${isOwner ? `<button class="delete-btn" data-id="${id}">Delete</button>` : ''}
         </div>
       `;
       messagesContainer.appendChild(div);
@@ -170,7 +185,9 @@ function listenToMessages() {
 messagesContainer.addEventListener("click", async (e) => {
   if (e.target.classList.contains("delete-btn")) {
     const msgId = e.target.getAttribute("data-id");
-    await deleteDoc(doc(db, `rooms/${currentRoom}/messages`, msgId));
+    try {
+      await deleteDoc(doc(db, `rooms/${currentRoom}/messages`, msgId));
+    } catch (err) { console.error("Error deleting message:", err); }
   }
 });
 
@@ -178,13 +195,15 @@ messagesContainer.addEventListener("click", async (e) => {
 async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text || !currentUser) return;
-  await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
-    text: text,
-    senderId: currentUser.uid,
-    senderName: currentUser.displayName || currentUser.email.split('@')[0],
-    timestamp: serverTimestamp()
-  });
-  messageInput.value = "";
+  try {
+    messageInput.value = "";
+    await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
+      text: text,
+      senderId: currentUser.uid,
+      senderName: currentUser.displayName || currentUser.email.split('@')[0],
+      timestamp: serverTimestamp()
+    });
+  } catch (err) { console.error("Send message error:", err); }
 }
 sendBtn.addEventListener("click", sendMessage);
 messageInput.addEventListener("keypress", (e) => { if (e.key === "Enter") sendMessage(); });
@@ -194,39 +213,45 @@ uploadImageBtn.addEventListener("click", () => imageFileInput.click());
 imageFileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file || !currentUser) return;
-  const storageRef = ref(storage, `chat_images/${Date.now()}_${file.name}`);
-  await uploadBytes(storageRef, file);
-  const url = await getDownloadURL(storageRef);
-  await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
-    imageUrl: url,
-    senderId: currentUser.uid,
-    senderName: currentUser.displayName || currentUser.email.split('@')[0],
-    timestamp: serverTimestamp()
-  });
+  try {
+    const storageRef = ref(storage, `chat_images/${Date.now()}_${file.name}`);
+    await uploadBytes(storageRef, file);
+    const url = await getDownloadURL(storageRef);
+    await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
+      imageUrl: url,
+      senderId: currentUser.uid,
+      senderName: currentUser.displayName || currentUser.email.split('@')[0],
+      timestamp: serverTimestamp()
+    });
+  } catch (err) { alert("Image upload failed: " + err.message); }
 });
 
 // Voice Notes
-let mediaRecorder, audioChunks = [];
+let mediaRecorder = null, audioChunks = [];
 voiceMsgBtn.addEventListener("click", async () => {
   if (!mediaRecorder || mediaRecorder.state === "inactive") {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
-    audioChunks = [];
-    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-    mediaRecorder.onstop = async () => {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      const storageRef = ref(storage, `voice_notes/${Date.now()}.webm`);
-      await uploadBytes(storageRef, audioBlob);
-      const url = await getDownloadURL(storageRef);
-      await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
-        audioUrl: url,
-        senderId: currentUser.uid,
-        senderName: currentUser.displayName || currentUser.email.split('@')[0],
-        timestamp: serverTimestamp()
-      });
-    };
-    mediaRecorder.start();
-    voiceMsgBtn.style.background = "rgba(244, 63, 94, 0.3)";
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorder.onstop = async () => {
+        try {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          const storageRef = ref(storage, `voice_notes/${Date.now()}.webm`);
+          await uploadBytes(storageRef, audioBlob);
+          const url = await getDownloadURL(storageRef);
+          await addDoc(collection(db, `rooms/${currentRoom}/messages`), {
+            audioUrl: url,
+            senderId: currentUser.uid,
+            senderName: currentUser.displayName || currentUser.email.split('@')[0],
+            timestamp: serverTimestamp()
+          });
+        } catch (err) { alert("Voice note upload failed: " + err.message); }
+      };
+      mediaRecorder.start();
+      voiceMsgBtn.style.background = "rgba(244, 63, 94, 0.3)";
+    } catch (err) { alert("Microphone access denied."); }
   } else {
     mediaRecorder.stop();
     voiceMsgBtn.style.background = "";
@@ -243,7 +268,9 @@ messageInput.addEventListener("input", () => {
   });
   clearTimeout(typingTimeout);
   typingTimeout = setTimeout(() => {
-    deleteDoc(doc(db, `rooms/${currentRoom}/typing`, currentUser.uid));
+    if (currentUser) {
+      deleteDoc(doc(db, `rooms/${currentRoom}/typing`, currentUser.uid)).catch(() => {});
+    }
   }, 2000);
 });
 
@@ -260,49 +287,53 @@ const servers = { iceServers: [{ urls: ['stun:stun1.l.google.com:19302', 'stun:s
 const callDocId = "globalActiveSession";
 
 startCallBtn.addEventListener("click", async () => {
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  localVideo.srcObject = localStream;
-  mediaPlaceholder.style.display = "none";
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    localVideo.srcObject = localStream;
+    mediaPlaceholder.style.display = "none";
 
-  peerConnection = new RTCPeerConnection(servers);
-  remoteStream = new MediaStream();
-  remoteVideo.srcObject = remoteStream;
+    peerConnection = new RTCPeerConnection(servers);
+    remoteStream = new MediaStream();
+    remoteVideo.srcObject = remoteStream;
 
-  localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-  peerConnection.ontrack = e => e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
+    localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+    peerConnection.ontrack = e => e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
 
-  const callDoc = doc(collection(db, "calls"), callDocId);
-  const offerCandidates = collection(callDoc, "offerCandidates");
-  const answerCandidates = collection(callDoc, "answerCandidates");
+    const callDoc = doc(collection(db, "calls"), callDocId);
+    const offerCandidates = collection(callDoc, "offerCandidates");
+    const answerCandidates = collection(callDoc, "answerCandidates");
 
-  peerConnection.onicecandidate = e => e.candidate && addDoc(offerCandidates, e.candidate.toJSON());
+    peerConnection.onicecandidate = e => e.candidate && addDoc(offerCandidates, e.candidate.toJSON());
 
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
-  await setDoc(callDoc, { 
-    offer, 
-    status: "calling",
-    callerName: currentUser.displayName || currentUser.email.split('@')[0] 
-  });
-
-  onSnapshot(callDoc, async (snap) => {
-    const data = snap.data();
-    if (peerConnection && !peerConnection.currentRemoteDescription && data?.answer) {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-    }
-  });
-
-  onSnapshot(answerCandidates, snap => {
-    snap.docChanges().forEach(change => {
-      if (change.type === "added") peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    await setDoc(callDoc, { 
+      offer, 
+      status: "calling",
+      callerName: currentUser ? (currentUser.displayName || currentUser.email.split('@')[0]) : "Unknown"
     });
-  });
 
-  startCallBtn.disabled = true;
-  endCallBtn.disabled = false;
-  toggleCameraBtn.disabled = false;
-  toggleMicBtn.disabled = false;
-  screenShareBtn.disabled = false;
+    onSnapshot(callDoc, async (snap) => {
+      const data = snap.data();
+      if (peerConnection && !peerConnection.currentRemoteDescription && data?.answer) {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+      }
+    });
+
+    onSnapshot(answerCandidates, snap => {
+      snap.docChanges().forEach(async change => {
+        if (change.type === "added" && peerConnection && peerConnection.remoteDescription) {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+        }
+      });
+    });
+
+    startCallBtn.disabled = true;
+    endCallBtn.disabled = false;
+    toggleCameraBtn.disabled = false;
+    toggleMicBtn.disabled = false;
+    screenShareBtn.disabled = false;
+  } catch (err) { alert("Call start error: " + err.message); }
 });
 
 function listenForIncomingCalls() {
@@ -317,45 +348,52 @@ function listenForIncomingCalls() {
 
 acceptCallBtn.addEventListener("click", async () => {
   incomingCallModal.classList.add("hidden");
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  localVideo.srcObject = localStream;
-  mediaPlaceholder.style.display = "none";
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    localVideo.srcObject = localStream;
+    mediaPlaceholder.style.display = "none";
 
-  peerConnection = new RTCPeerConnection(servers);
-  remoteStream = new MediaStream();
-  remoteVideo.srcObject = remoteStream;
+    peerConnection = new RTCPeerConnection(servers);
+    remoteStream = new MediaStream();
+    remoteVideo.srcObject = remoteStream;
 
-  localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-  peerConnection.ontrack = e => e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
+    localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+    peerConnection.ontrack = e => e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
 
-  const callDoc = doc(collection(db, "calls"), callDocId);
-  const answerCandidates = collection(callDoc, "answerCandidates");
-  const offerCandidates = collection(callDoc, "offerCandidates");
+    const callDoc = doc(collection(db, "calls"), callDocId);
+    const answerCandidates = collection(callDoc, "answerCandidates");
+    const offerCandidates = collection(callDoc, "offerCandidates");
 
-  peerConnection.onicecandidate = e => e.candidate && addDoc(answerCandidates, e.candidate.toJSON());
+    peerConnection.onicecandidate = e => e.candidate && addDoc(answerCandidates, e.candidate.toJSON());
 
-  const callSnap = await getDoc(callDoc);
-  await peerConnection.setRemoteDescription(new RTCSessionDescription(callSnap.data().offer));
+    const callSnap = await getDoc(callDoc);
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(callSnap.data().offer));
 
-  const answer = await peerConnection.createAnswer();
-  await peerConnection.setLocalDescription(answer);
-  await updateDoc(callDoc, { answer, status: "connected" });
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    await updateDoc(callDoc, { answer, status: "connected" });
 
-  onSnapshot(offerCandidates, snap => {
-    snap.docChanges().forEach(change => {
-      if (change.type === "added") peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+    onSnapshot(offerCandidates, snap => {
+      snap.docChanges().forEach(async change => {
+        if (change.type === "added" && peerConnection && peerConnection.remoteDescription) {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+        }
+      });
     });
-  });
 
-  startCallBtn.disabled = true;
-  endCallBtn.disabled = false;
-  toggleCameraBtn.disabled = false;
-  toggleMicBtn.disabled = false;
-  screenShareBtn.disabled = false;
+    startCallBtn.disabled = true;
+    endCallBtn.disabled = false;
+    toggleCameraBtn.disabled = false;
+    toggleMicBtn.disabled = false;
+    screenShareBtn.disabled = false;
+  } catch (err) { alert("Call accept error: " + err.message); }
 });
 
-rejectCallBtn.addEventListener("click", () => {
+rejectCallBtn.addEventListener("click", async () => {
   incomingCallModal.classList.add("hidden");
+  try {
+    await updateDoc(doc(collection(db, "calls"), callDocId), { offer: null, status: "rejected" });
+  } catch(e) {}
 });
 
 // Screen Share Toggle
@@ -364,9 +402,12 @@ screenShareBtn.addEventListener("click", async () => {
     try {
       const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const screenTrack = screenStream.getVideoTracks()[0];
-      const sender = peerConnection.getSenders().find(s => s.track?.kind === 'video');
-      if (sender) sender.replaceTrack(screenTrack);
-      else peerConnection.addTrack(screenTrack, localStream);
+      const sender = peerConnection ? peerConnection.getSenders().find(s => s.track?.kind === 'video') : null;
+      if (sender) {
+        sender.replaceTrack(screenTrack);
+      } else if (peerConnection) {
+        peerConnection.addTrack(screenTrack, localStream);
+      }
 
       localVideo.srcObject = screenStream;
       isScreenSharing = true;
@@ -380,8 +421,8 @@ screenShareBtn.addEventListener("click", async () => {
 });
 
 function stopScreenShare() {
-  const videoTrack = localStream.getVideoTracks()[0];
-  const sender = peerConnection.getSenders().find(s => s.track?.kind === 'video');
+  const videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
+  const sender = peerConnection ? peerConnection.getSenders().find(s => s.track?.kind === 'video') : null;
   if (sender && videoTrack) sender.replaceTrack(videoTrack);
   localVideo.srcObject = localStream;
   isScreenSharing = false;
@@ -390,13 +431,21 @@ function stopScreenShare() {
 
 // Camera Toggle
 toggleCameraBtn.addEventListener("click", async () => {
-  let videoTrack = localStream.getVideoTracks()[0];
+  let videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
   if (!videoTrack) {
-    const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
-    videoTrack = camStream.getVideoTracks()[0];
-    localStream.addTrack(videoTrack);
-    peerConnection.addTrack(videoTrack, localStream);
-    localVideo.srcObject = localStream;
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      videoTrack = camStream.getVideoTracks()[0];
+      if (localStream) localStream.addTrack(videoTrack);
+      
+      const sender = peerConnection ? peerConnection.getSenders().find(s => s.track && s.track.kind === 'video') : null;
+      if (sender) {
+        sender.replaceTrack(videoTrack);
+      } else if (peerConnection) {
+        peerConnection.addTrack(videoTrack, localStream);
+      }
+      localVideo.srcObject = localStream;
+    } catch (err) { alert("Camera access denied."); }
   } else {
     videoTrack.enabled = !videoTrack.enabled;
   }
@@ -404,7 +453,7 @@ toggleCameraBtn.addEventListener("click", async () => {
 
 // Mic Mute Toggle
 toggleMicBtn.addEventListener("click", () => {
-  const audioTrack = localStream.getAudioTracks()[0];
+  const audioTrack = localStream ? localStream.getAudioTracks()[0] : null;
   if (audioTrack) {
     isMuted = !isMuted;
     audioTrack.enabled = !isMuted;

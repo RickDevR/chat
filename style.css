@@ -161,7 +161,7 @@ input[type="text"], input[type="email"], input[type="password"] {
 .auth-forms { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 12px; }
 .auth-btn-group { display: flex; gap: 8px; }
 .auth-btn-group .btn { flex: 1; }
-.divider { display: flex; align-items: center; font-size: 0.75rem; color: var(--text-muted); margin: 4px 0; }
+.divider { display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: var(--text-muted); margin: 4px 0; }
 .status-badge { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-muted); }
 .status-badge .dot { width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
 .hidden { display: none !important; }
